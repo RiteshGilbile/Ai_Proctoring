@@ -215,3 +215,5 @@ while True:
 camera.release()
 landmarker.close()
 cv2.destroyAllWindows()
+
+
