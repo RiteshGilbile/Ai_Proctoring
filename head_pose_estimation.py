@@ -1,177 +1,217 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-import time
-import os
 
-# Locate the face landmark model
-folder_path = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(folder_path, "models", "face_landmarker.task")
+# Load MediaPipe Face Landmarker
+model_path = "models/face_landmarker.task"
 
-# MediaPipe Tasks API
 BaseOptions = mp.tasks.BaseOptions
 FaceLandmarker = mp.tasks.vision.FaceLandmarker
 FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
-RunningMode = mp.tasks.vision.RunningMode
+VisionRunningMode = mp.tasks.vision.RunningMode
 
-# Configure detector
 options = FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=model_path),
-    running_mode=RunningMode.VIDEO,
+    running_mode=VisionRunningMode.VIDEO,
     num_faces=1
 )
 
-# Facial landmark indices
-landmark_indices = [1, 152, 33, 263, 61, 291]
+landmarker = FaceLandmarker.create_from_options(options)
 
-# Corresponding approximate 3D face points
-face_3d_points = np.array([
-    (0.0, 0.0, 0.0),          # Nose
+# Open webcam
+camera = cv2.VideoCapture(0)
+
+camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+if not camera.isOpened():
+    print("Cannot access webcam.")
+    landmarker.close()
+    exit()
+
+# Create webcam window
+window_name = "AI Exam Proctoring - Head Pose"
+cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+cv2.resizeWindow(window_name, 800, 600)
+
+# 3D reference points for the face
+model_points = np.array([
+    (0.0, 0.0, 0.0),          # Nose tip
     (0.0, -330.0, -65.0),     # Chin
-    (-225.0, 170.0, -135.0),  # Left eye corner
-    (225.0, 170.0, -135.0),   # Right eye corner
+    (-225.0, 170.0, -135.0),  # Left eye outer corner
+    (225.0, 170.0, -135.0),   # Right eye outer corner
     (-150.0, -150.0, -125.0), # Left mouth corner
     (150.0, -150.0, -125.0)   # Right mouth corner
 ], dtype=np.float64)
 
-with FaceLandmarker.create_from_options(options) as landmarker:
+start_time = cv2.getTickCount()
+previous_timestamp = 0
 
-    camera = cv2.VideoCapture(0)
-    start_time = time.monotonic()
+while True:
+    success, frame = camera.read()
 
-    while camera.isOpened():
+    if not success:
+        print("Cannot read webcam frame.")
+        break
 
-        success, frame = camera.read()
+    height, width, _ = frame.shape
 
-        if not success:
-            print("Unable to access webcam")
-            break
+    # Use the original camera view without mirroring
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Mirror webcam image
-        frame = cv2.flip(frame, 1)
+    mp_image = mp.Image(
+        image_format=mp.ImageFormat.SRGB,
+        data=rgb_frame
+    )
 
-        height, width, _ = frame.shape
+    # Generate increasing video timestamps
+    current_timestamp = int(
+        (cv2.getTickCount() - start_time)
+        * 1000 / cv2.getTickFrequency()
+    )
 
-        # Convert BGR to RGB
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    current_timestamp = max(
+        current_timestamp, previous_timestamp + 1
+    )
 
-        mp_image = mp.Image(
-            image_format=mp.ImageFormat.SRGB,
-            data=rgb_frame
-        )
+    previous_timestamp = current_timestamp
 
-        timestamp_ms = int(
-            (time.monotonic() - start_time) * 1000
-        )
+    # Detect face landmarks
+    result = landmarker.detect_for_video(
+        mp_image, current_timestamp
+    )
 
-        results = landmarker.detect_for_video(
-            mp_image,
-            timestamp_ms
-        )
+    # Camera calibration approximation
+    focal_length = width
+    center = (width / 2, height / 2)
 
-        if results.face_landmarks:
+    camera_matrix = np.array([
+        [focal_length, 0, center[0]],
+        [0, focal_length, center[1]],
+        [0, 0, 1]
+    ], dtype=np.float64)
 
-            face = results.face_landmarks[0]
+    distortion = np.zeros((4, 1), dtype=np.float64)
 
-            # Convert normalized landmarks to pixel coordinates
-            face_2d_points = []
+    # Draw center guide
+    cv2.line(
+        frame, (width // 2, 0),
+        (width // 2, height), (255, 255, 0), 1
+    )
 
-            for index in landmark_indices:
-                x = int(face[index].x * width)
-                y = int(face[index].y * height)
+    cv2.line(
+        frame, (0, height // 2),
+        (width, height // 2), (255, 255, 0), 1
+    )
 
-                face_2d_points.append([x, y])
+    if result.face_landmarks:
+        landmarks = result.face_landmarks[0]
 
-            face_2d_points = np.array(
-                face_2d_points,
-                dtype=np.float64
+        # Select six facial landmarks
+        landmark_ids = [1, 152, 33, 263, 61, 291]
+
+        image_points = np.array([
+            (
+                landmarks[i].x * width,
+                landmarks[i].y * height
             )
+            for i in landmark_ids
+        ], dtype=np.float64)
 
-            # Estimate camera parameters
-            focal_length = width
-            center = (width / 2, height / 2)
-
-            camera_matrix = np.array([
-                [focal_length, 0, center[0]],
-                [0, focal_length, center[1]],
-                [0, 0, 1]
-            ], dtype=np.float64)
-
-            distortion_coefficients = np.zeros((4, 1))
-
-            # Estimate head rotation
-            success, rotation_vector, translation_vector = cv2.solvePnP(
-                face_3d_points,
-                face_2d_points,
+        # Estimate head orientation
+        success, rotation_vector, translation_vector = (
+            cv2.solvePnP(
+                model_points,
+                image_points,
                 camera_matrix,
-                distortion_coefficients,
+                distortion,
                 flags=cv2.SOLVEPNP_ITERATIVE
             )
+        )
 
-            if success:
+        if success:
+            rotation_matrix, _ = cv2.Rodrigues(
+                rotation_vector
+            )
 
-                rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
+            angles = cv2.RQDecomp3x3(
+                rotation_matrix
+            )[0]
 
-                angles, _, _, _, _, _ = cv2.RQDecomp3x3(
-                    rotation_matrix
-                )
+            pitch = angles[0]
+            yaw = angles[1]
+            roll = angles[2]
 
-                pitch = angles[0] * 360
-                yaw = angles[1] * 360
+            # Determine head direction
+            if pitch > 12:
+                vertical_status = "Looking Down"
+            elif pitch < -12:
+                vertical_status = "Looking Up"
+            else:
+                vertical_status = "Head Vertical: Normal"
 
-                # Basic head direction classification
-                if yaw < -15:
-                    direction = "Looking Left"
-                elif yaw > 15:
-                    direction = "Looking Right"
-                elif pitch < -15:
-                    direction = "Looking Down"
-                elif pitch > 15:
-                    direction = "Looking Up"
-                else:
-                    direction = "Facing Screen"
+            if yaw > 15:
+                horizontal_status = "Looking Right"
+            elif yaw < -15:
+                horizontal_status = "Looking Left"
+            else:
+                horizontal_status = "Facing Forward"
 
-                cv2.putText(
+            # Draw detected facial points
+            for point in image_points:
+                cv2.circle(
                     frame,
-                    direction,
-                    (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    (0, 255, 0),
-                    2
+                    (int(point[0]), int(point[1])),
+                    4, (0, 255, 0), -1
                 )
 
-                # Display estimated angles
-                cv2.putText(
-                    frame,
-                    f"Yaw: {yaw:.1f}  Pitch: {pitch:.1f}",
-                    (20, 75),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 0),
-                    2
-                )
-
-        else:
+            # Display angles and status
+            cv2.putText(
+                frame,
+                "Pitch: " + str(round(pitch, 1)),
+                (20, 35),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65, (0, 255, 0), 2
+            )
 
             cv2.putText(
                 frame,
-                "No Face Detected",
-                (20, 40),
+                "Yaw: " + str(round(yaw, 1)),
+                (20, 65),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 0, 255),
-                2
+                0.65, (0, 255, 0), 2
             )
 
-        cv2.imshow(
-            "AI Exam Proctoring - Head Pose",
-            frame
+            cv2.putText(
+                frame,
+                vertical_status,
+                (20, 110),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (0, 0, 255), 2
+            )
+
+            cv2.putText(
+                frame,
+                horizontal_status,
+                (20, 145),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (255, 255, 0), 2
+            )
+
+    else:
+        cv2.putText(
+            frame,
+            "No Face Detected",
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8, (0, 0, 255), 2
         )
 
-        # Press Q to exit
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+    cv2.imshow(window_name, frame)
 
-    camera.release()
-    cv2.destroyAllWindows()
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
+
+camera.release()
+landmarker.close()
+cv2.destroyAllWindows()
