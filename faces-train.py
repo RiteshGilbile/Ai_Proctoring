@@ -1,91 +1,270 @@
-import cv2
 import os
+import cv2
 import numpy as np
 
-# Dataset folder
-dataset_path = "dataset"
-
-# Face detector
-face_detector = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
 )
 
-# LBPH face recognizer
-recognizer = cv2.face.LBPHFaceRecognizer_create()
+DATASET_DIR = os.path.join(
+    BASE_DIR,
+    "dataset"
+)
 
-faces = []
-labels = []
+MODEL_PATH = os.path.join(
+    BASE_DIR,
+    "face_model.yml"
+)
 
-# Store student names
+NAMES_PATH = os.path.join(
+    BASE_DIR,
+    "student_names.txt"
+)
+
+face_detector = cv2.CascadeClassifier(
+    cv2.data.haarcascades +
+    "haarcascade_frontalface_default.xml"
+)
+
+if face_detector.empty():
+
+    print(
+        "Error: OpenCV Haar face detector "
+        "could not be loaded."
+    )
+
+    raise SystemExit(1)
+
+
+if not hasattr(cv2, "face"):
+
+    print(
+        "Error: cv2.face is unavailable."
+    )
+
+    print(
+        "Install opencv-contrib-python."
+    )
+
+    raise SystemExit(1)
+
+
+recognizer = (
+    cv2.face.LBPHFaceRecognizer_create()
+)
+
+training_faces = []
+training_labels = []
+
 student_names = {}
 
 student_id = 0
 
-# Read student folders
-for student_name in sorted(os.listdir(dataset_path)):
 
-    student_folder = os.path.join(dataset_path, student_name)
+if not os.path.isdir(DATASET_DIR):
 
-    if not os.path.isdir(student_folder):
+    print(
+        "Dataset folder not found:",
+        DATASET_DIR
+    )
+
+    raise SystemExit(1)
+
+
+# Read every student folder
+for student_name in sorted(
+    os.listdir(DATASET_DIR)
+):
+
+    student_folder = os.path.join(
+        DATASET_DIR,
+        student_name
+    )
+
+    if (
+        not os.path.isdir(student_folder)
+        or student_name.startswith(".")
+    ):
         continue
 
     student_names[student_id] = student_name
 
-    print("Reading images for:", student_name)
+    student_samples = 0
 
-    for image_name in os.listdir(student_folder):
-
-        image_path = os.path.join(student_folder, image_name)
-
-        # Read image in grayscale
-        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-
-        if image is None:
-            print("Skipping invalid image:", image_path)
-            continue
-
-        # Detect faces
-        detected_faces = face_detector.detectMultiScale(
-            image,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(50, 50)
-        )
-
-        for (x, y, w, h) in detected_faces:
-
-            # Crop the detected face
-            face_image = image[y:y+h, x:x+w]
-
-            # Resize for consistency
-            face_image = cv2.resize(face_image, (200, 200))
-
-            faces.append(face_image)
-            labels.append(student_id)
-
-    student_id += 1
-
-# Train the model
-if len(faces) > 0:
-
-    recognizer.train(
-        faces,
-        np.array(labels, dtype=np.int32)
+    print(
+        "Reading images for:",
+        student_name
     )
 
-    # Save trained model
-    recognizer.save("face_model.yml")
+    # Read every image
+    for image_name in sorted(
+        os.listdir(student_folder)
+    ):
 
-    # Save student names
-    with open("student_names.txt", "w") as file:
+        if not image_name.lower().endswith(
+            (
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".bmp"
+            )
+        ):
+            continue
 
-        for label, name in student_names.items():
-            file.write(str(label) + ":" + name + "\n")
+        image_path = os.path.join(
+            student_folder,
+            image_name
+        )
 
-    print("\nTraining completed successfully!")
-    print("Total face samples:", len(faces))
-    print("Model saved as face_model.yml")
-    print("Student names saved as student_names.txt")
+        image = cv2.imread(
+            image_path,
+            cv2.IMREAD_GRAYSCALE
+        )
 
-else:
-    print("No faces found. Check your dataset images and folder structure.")
+        if image is None:
+
+            print(
+                "Skipping invalid image:",
+                image_path
+            )
+
+            continue
+
+        detected_faces = (
+            face_detector.detectMultiScale(
+                image,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(40, 40)
+            )
+        )
+
+        if len(detected_faces) == 0:
+
+            print(
+                "No face found, skipping:",
+                image_name
+            )
+
+            continue
+
+        # Use largest detected face
+        x, y, w, h = max(
+            detected_faces,
+            key=lambda box:
+            box[2] * box[3]
+        )
+
+        face_image = image[
+            y:y + h,
+            x:x + w
+        ]
+
+        face_image = cv2.resize(
+            face_image,
+            (200, 200)
+        )
+
+        training_faces.append(
+            face_image
+        )
+
+        training_labels.append(
+            student_id
+        )
+
+        student_samples += 1
+
+    print(
+        "  Usable face samples:",
+        student_samples
+    )
+
+    if student_samples > 0:
+
+        student_id += 1
+
+    else:
+
+        student_names.pop(
+            student_id,
+            None
+        )
+
+
+if len(training_faces) == 0:
+
+    print(
+        "No usable face samples found."
+    )
+
+    print(
+        "Register students first."
+    )
+
+    raise SystemExit(1)
+
+
+if len(set(training_labels)) < 1:
+
+    print(
+        "No student labels available "
+        "for training."
+    )
+
+    raise SystemExit(1)
+
+
+# Train LBPH
+recognizer.train(
+    training_faces,
+    np.array(
+        training_labels,
+        dtype=np.int32
+    )
+)
+
+
+# Save trained model
+recognizer.save(
+    MODEL_PATH
+)
+
+
+# Save student names
+with open(
+    NAMES_PATH,
+    "w",
+    encoding="utf-8"
+) as file:
+
+    for label, name in student_names.items():
+
+        file.write(
+            f"{label}:{name}\n"
+        )
+
+
+print(
+    "\nTraining completed successfully!"
+)
+
+print(
+    "Total face samples:",
+    len(training_faces)
+)
+
+print(
+    "Number of students:",
+    len(student_names)
+)
+
+print(
+    "Model saved as:",
+    MODEL_PATH
+)
+
+print(
+    "Student names saved as:",
+    NAMES_PATH
+)
