@@ -1,25 +1,9 @@
-# macOS system files
-.DS_Store
-**/.DS_Store
-
-# Recorded audio/video files
 recorded_audio/
 recorded_video/
-
-# Python cache
 __pycache__/
 *.py[cod]
-
-# Virtual environment
-venv/
-.venv/
-
-# IDE files
-.vscode/
-
-# Python environment files
-.env
-
-# Generated face recognition model
 face_model.yml
 student_names.txt
+Done.txt
+.DS_Store
+dataset/
