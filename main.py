@@ -217,17 +217,42 @@ try:
 
         # 2. Face detection and 3. face recognition (same Haar + LBPH approach).
         detected_faces = face_detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50)
-        )
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=8,
+            minSize=(80, 80)
+    )
         face_labels = []
+
+        # Remove very small/weak detections
+        valid_faces = []
+
+        for face in detected_faces:
+            x, y, w, h = face
+            if w >= 80 and h >= 80:
+                valid_faces.append(face)
+                
+        detected_faces = valid_faces
         for (x, y, w, h) in detected_faces:
             label = "Face detected"
             box_color = (0, 255, 0)
             if recognizer is not None:
-                face_image = cv2.resize(gray[y:y+h, x:x+w], (200, 200))
+                face_image = gray[y:y+h, x:x+w]
+
+                face_image = cv2.resize(
+                    face_image,
+                    (200, 200)
+                )
+
+                # Improve contrast, same approach used in the working faces.py
+                face_image = cv2.equalizeHist(face_image)
+
                 student_id, confidence = recognizer.predict(face_image)
-                if confidence < 65 and student_id in student_names:
+
+                # LBPH uses distance: lower means better match
+                if confidence < 85 and student_id in student_names:
                     label = student_names[student_id]
+                    box_color = (0, 255, 0)
                 else:
                     label = "Unknown Person"
                     box_color = (0, 0, 255)
