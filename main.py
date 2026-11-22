@@ -8,6 +8,7 @@ import threading
 import cv2
 import numpy as np
 
+from alert import check_alerts, show_alert
 
 try:
     import mediapipe as mp
@@ -374,14 +375,8 @@ try:
                     cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(output, object_label, (x1, max(y1-6, 18)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
 
-        # 10. Choose one filter view in the same window (filter.py).
-        if display_mode == 2:
-            output = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        elif display_mode == 3:
-            output = cv2.GaussianBlur(frame, (15, 15), 0)
-        elif display_mode == 4:
-            edges = cv2.Canny(frame, 100, 200)
-            output = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+        # 10. Check proctoring alerts
+        check_alerts(people_count, phone_count)
 
         # 11. Dashboard overlay: all feature statuses are shown in this window.
         panel_height = 250
@@ -408,6 +403,9 @@ try:
             cv2.putText(output, message, (18, y_text), cv2.FONT_HERSHEY_SIMPLEX,
                         0.43 if index else 0.52, color, 1 if index else 2, cv2.LINE_AA)
             y_text += 18
+
+        # Display alert banner and warning counter.
+        output = show_alert(output, width, height)
 
         # Save the same combined monitoring view to the video file.
         if video_writer is not None and video_writer.isOpened():

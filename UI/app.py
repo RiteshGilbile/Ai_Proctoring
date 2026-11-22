@@ -160,7 +160,28 @@ def exam(request: Request):
         name="exam.html"
     )
 
+# ---------------- START EXAM ----------------
 
+@app.get("/start-exam")
+def start_exam():
+
+    main_script = os.path.join(
+        BASE_DIR,
+        "main.py"
+    )
+
+    subprocess.Popen(
+        [
+            sys.executable,
+            main_script
+        ],
+        cwd=BASE_DIR
+    )
+
+    return RedirectResponse(
+        url="/result",
+        status_code=303
+    )
 # ---------------- RESULT ----------------
 
 @app.get("/result", response_class=HTMLResponse)
