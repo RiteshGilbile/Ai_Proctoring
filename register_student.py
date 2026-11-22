@@ -22,7 +22,10 @@ print("=" * 55)
 print("       DYNAMIC STUDENT FACE REGISTRATION")
 print("=" * 55)
 
-student_name = input("Enter student name / ID: ").strip()
+if len(sys.argv) > 1:
+    student_name = sys.argv[1].strip()
+else:
+    student_name = input("Enter student name / ID: ").strip()
 
 if not student_name:
     print("Student name cannot be empty.")
